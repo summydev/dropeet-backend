@@ -80,9 +80,8 @@ async def google_auth_callback(request: Request, db: Session = Depends(get_db)):
     # Generate JWT for the Frontend
     access_token = create_access_token(data={"sub": str(user.id)})
     
-    return {
-        "status": "success", 
-        "message": "Login successful",
-        "access_token": access_token,
-        "token_type": "bearer"
-    }
+    # Redirect back to the frontend application!
+    # Update this URL to wherever your frontend developer is hosting the app later
+    frontend_dashboard_url = "http://localhost:3000/dashboard" 
+    
+    return RedirectResponse(url=f"{frontend_dashboard_url}?token={access_token}")

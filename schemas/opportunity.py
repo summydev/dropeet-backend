@@ -10,6 +10,13 @@ class LinkRequest(BaseModel):
     """Payload received from the frontend when a user drops a link."""
     url: str = Field(..., description="The URL of the opportunity to scrape")
 
+class OpportunityUpdateRequest(BaseModel):
+    """Payload received when a user edits an opportunity and wants to sync it."""
+    title: str
+    organization: Optional[str] = None
+    deadline: Optional[datetime] = None
+    summary: Optional[str] = None
+
 # ==========================================
 # 2. AI Extraction Schemas
 # ==========================================

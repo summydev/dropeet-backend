@@ -1,14 +1,14 @@
 import jwt
 from datetime import datetime, timedelta, timezone
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from config.settings import settings
 from database.session import SessionLocal
 from database.models import User
 
-# This tells FastAPI where the frontend should look to authenticate
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/google/login")
+# --- THE TWEAK: Using HTTPBearer instead of OAuth2PasswordBearer ---
+security = HTTPBearer()
 
 def get_db():
     db = SessionLocal()
@@ -25,13 +25,16 @@ def create_access_token(data: dict):
     encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
     return encoded_jwt
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)) -> User:
     """Verifies the JWT and returns the User object."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    
+    # Extract the actual token string from the credentials object
+    token = credentials.credentials
     
     try:
         # Decode the token

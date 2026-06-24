@@ -4,14 +4,13 @@ from database.session import SessionLocal
 from database.models import Opportunity
 from services.scraper import scrape_webpage
 from services.ai_pipeline import extract_opportunity_details
-# Assuming your calendar logic is in services/google_calendar.py
-from services.google_calendar import sync_to_google_calendar 
 
 logger = logging.getLogger(__name__)
 
 async def process_link_task(url: str, user_id: int):
     """
-    The main background worker pipeline: Scrape -> AI Extract -> Save DB -> Calendar Sync.
+    The main background worker pipeline: Scrape -> AI Extract -> Save DB.
+    (Calendar sync is now triggered manually by the user via the frontend).
     """
     # 1. Scrape the URL
     cleaned_text, image_bytes, image_mime = await scrape_webpage(url)
@@ -25,7 +24,7 @@ async def process_link_task(url: str, user_id: int):
         logger.error(f"Pipeline aborted: AI extraction failed for {url}")
         return
 
-    # 3. Save to Database
+    # 3. Save to Database as a Draft
     db = SessionLocal()
     try:
         parsed_deadline = None
@@ -46,11 +45,9 @@ async def process_link_task(url: str, user_id: int):
         db.add(new_opp)
         db.commit()
         db.refresh(new_opp)
-        logger.info(f"✅ Saved to DB: {new_opp.title}")
+        logger.info(f"✅ Saved Draft to DB: {new_opp.title}")
         
-        # 4. Trigger Calendar Sync
-        if new_opp.deadline:
-            sync_to_google_calendar(new_opp, db)
+        # NOTE: Auto-sync removed! The frontend will trigger the sync after user confirmation.
             
     except Exception as e:
         logger.error(f"❌ Worker Database Failure: {e}")

@@ -2,9 +2,10 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 
-from schemas.opportunity import LinkRequest, OpportunityResponse
-from database.models import Opportunity, User
+from schemas.opportunity import LinkRequest, OpportunityResponse, OpportunityUpdateRequest
+from database.models import Opportunity, User, OpportunityStatus
 from services.tasks import process_link_task
+from services.google_calendar import sync_to_google_calendar
 from api.deps import get_db, get_current_user
 
 router = APIRouter(prefix="/opportunities", tags=["Opportunities"])
@@ -33,3 +34,38 @@ async def get_opportunities(
     
     records = db.query(Opportunity).filter(Opportunity.user_id == current_user.id).all()
     return records
+
+@router.put("/{opportunity_id}", response_model=OpportunityResponse)
+async def update_and_sync_opportunity(
+    opportunity_id: int,
+    request: OpportunityUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Allows users to edit an opportunity and explicitly sync it to their calendar."""
+    
+    # 1. Find the opportunity and ensure this user actually owns it
+    opp = db.query(Opportunity).filter(
+        Opportunity.id == opportunity_id, 
+        Opportunity.user_id == current_user.id
+    ).first()
+    
+    if not opp:
+        raise HTTPException(status_code=404, detail="Opportunity not found.")
+
+    # 2. Apply the user's edits
+    opp.title = request.title
+    opp.organization = request.organization
+    opp.deadline = request.deadline
+    opp.summary = request.summary
+    
+    # 3. Push to Google Calendar using your existing service
+    if opp.deadline:
+        sync_to_google_calendar(opp, db)
+        # Update the status to show it's been handled!
+        opp.status = OpportunityStatus.ACTIONED 
+    
+    db.commit()
+    db.refresh(opp)
+    
+    return opp
