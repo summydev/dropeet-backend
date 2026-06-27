@@ -10,7 +10,11 @@ from api.deps import get_db, create_access_token
 
 router = APIRouter(prefix="/auth/google", tags=["Authentication"])
 
-SCOPES = ['https://www.googleapis.com/auth/calendar.events']
+SCOPES = [
+    'https://www.googleapis.com/auth/calendar.events',
+    'openid',
+    'https://www.googleapis.com/auth/userinfo.email'
+]
 
 @router.get("/login")
 async def login_via_google():
@@ -25,18 +29,33 @@ async def login_via_google():
         prompt='consent',
         include_granted_scopes='true'
     )
-    return RedirectResponse(authorization_url)
+    
+    # Create the redirect response
+    response = RedirectResponse(authorization_url)
+    
+    # Save the state and the automatically generated code_verifier into secure cookies
+    response.set_cookie(key="oauth_state", value=state, httponly=True, secure=True, samesite="none")
+    if hasattr(flow, 'code_verifier'):
+        response.set_cookie(key="code_verifier", value=flow.code_verifier, httponly=True, secure=True, samesite="none")
+        
+    return response
 
 @router.get("/callback")
 async def google_auth_callback(request: Request, db: Session = Depends(get_db)):
     """Step 2: Google sends the user back here to swap the code for tokens."""
     state = request.query_params.get("state")
-    code = request.query_params.get("code")
+    
+    # Retrieve the code_verifier from the user's cookies
+    code_verifier = request.cookies.get("code_verifier")
     
     flow = Flow.from_client_secrets_file(
         settings.GOOGLE_CLIENT_SECRETS_FILE, scopes=SCOPES, state=state
     )
     flow.redirect_uri = settings.GOOGLE_REDIRECT_URI
+    
+    # Inject the code_verifier back into the flow BEFORE fetching the token
+    if code_verifier:
+        flow.code_verifier = code_verifier
     
     flow.fetch_token(authorization_response=str(request.url))
     credentials = flow.credentials
@@ -80,8 +99,13 @@ async def google_auth_callback(request: Request, db: Session = Depends(get_db)):
     # Generate JWT for the Frontend
     access_token = create_access_token(data={"sub": str(user.id)})
     
-    # Redirect back to the frontend application!
-    # Update this URL to wherever your frontend developer is hosting the app later
-    frontend_dashboard_url = "http://localhost:3000/dashboard" 
+    # FIX: Point this exactly to your frontend local server layout!
+    # If using VS Code Live Server, it should be: http://127.0.0.1:5500/dashboard.html
+    frontend_dashboard_url = "http://127.0.0.1:5500/dashboard.html" 
     
-    return RedirectResponse(url=f"{frontend_dashboard_url}?token={access_token}")
+    # Clear the cookies now that authentication is complete
+    final_response = RedirectResponse(url=f"{frontend_dashboard_url}?token={access_token}")
+    final_response.delete_cookie("oauth_state")
+    final_response.delete_cookie("code_verifier")
+    
+    return final_response
