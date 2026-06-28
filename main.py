@@ -21,15 +21,11 @@ app = FastAPI(
 )
 
 # --- 3. FIX YOUR CORS TO ALLOW LIVE SERVER ---
+# CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:5500",           # <-- Added your local frontend testing URL
-        "https://your-frontend-domain.com" # Replace with your live frontend URL later!
-        "https://dropeet-ruddy.vercel.app/"
-    ], 
-    allow_credentials=True,
+    allow_origins=["*"],      # Allows all domains (perfect for Bearer token APIs)
+    allow_credentials=False,  # We use tokens instead of cookies, so this must be False
     allow_methods=["*"],
     allow_headers=["*"],
 )
