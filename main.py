@@ -27,6 +27,7 @@ app.add_middleware(
         "http://localhost:3000",
         "http://127.0.0.1:5500",           # <-- Added your local frontend testing URL
         "https://your-frontend-domain.com" # Replace with your live frontend URL later!
+        "https://dropeet-ruddy.vercel.app/"
     ], 
     allow_credentials=True,
     allow_methods=["*"],

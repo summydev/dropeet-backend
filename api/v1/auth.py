@@ -101,7 +101,7 @@ async def google_auth_callback(request: Request, db: Session = Depends(get_db)):
     
     # FIX: Point this exactly to your frontend local server layout!
     # If using VS Code Live Server, it should be: http://127.0.0.1:5500/dashboard.html
-    frontend_dashboard_url = "http://127.0.0.1:5500/dashboard.html" 
+    frontend_dashboard_url = "https://dropeet-ruddy.vercel.app/dashboard.html" 
     
     # Clear the cookies now that authentication is complete
     final_response = RedirectResponse(url=f"{frontend_dashboard_url}?token={access_token}")
