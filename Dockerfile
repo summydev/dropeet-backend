@@ -8,11 +8,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 4. Force Playwright to download the exact matching browser locally
-RUN playwright install chromium
+# 4. THE MAGIC LINE: Force Playwright to save the browser locally 
+# where the restricted Render user has full permission to read it
+ENV PLAYWRIGHT_BROWSERS_PATH=0
 
-# 5. Crucial Step: Tell Playwright to download all the missing Linux 
-# graphics libraries (like libgbm1, libxss1) that the browser needs to run
+# 5. Download the local browser and Linux graphics libraries
+RUN playwright install chromium
 RUN playwright install-deps chromium
 
 # 6. Copy the rest of your application code
