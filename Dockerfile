@@ -1,26 +1,25 @@
-# 1. Use Microsoft's official Playwright Python image as the foundation.
-# This comes pre-packaged with all the Linux OS graphics libraries 
-# required to run headless Chromium without throwing errors.
-FROM mcr.microsoft.com/playwright/python:v1.60.0-jammy
+# 1. Start with a clean, lightweight, standard Python image
+FROM python:3.10-slim
 
 # 2. Establish the internal working directory
 WORKDIR /app
 
-# 3. Layer Caching: Copy requirements first so Docker skips re-installing 
-# your packages every time you make a tiny code change.
+# 3. Copy requirements and install Python packages
 COPY requirements.txt .
-
-# 4. Install dependencies cleanly without saving temporary cache files
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 5. Install the Playwright Chromium browser binaries inside the container
+# 4. Force Playwright to download the exact matching browser locally
 RUN playwright install chromium
 
-# 6. Copy the rest of your application code into the container
+# 5. Crucial Step: Tell Playwright to download all the missing Linux 
+# graphics libraries (like libgbm1, libxss1) that the browser needs to run
+RUN playwright install-deps chromium
+
+# 6. Copy the rest of your application code
 COPY . .
 
-# 7. Document that the container intends to use port 10000
+# 7. Document the port
 EXPOSE 10000
 
-# 8. Start Uvicorn using the dynamic PORT variable provided by Render
+# 8. Start Uvicorn
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000}"]
