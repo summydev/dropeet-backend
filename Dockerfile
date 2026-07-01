@@ -13,11 +13,14 @@ COPY requirements.txt .
 # 4. Install dependencies cleanly without saving temporary cache files
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 5. Copy the rest of your application code into the container
+# 5. Install the Playwright Chromium browser binaries inside the container
+RUN playwright install chromium
+
+# 6. Copy the rest of your application code into the container
 COPY . .
 
-# 6. Document that the container intends to use port 10000
+# 7. Document that the container intends to use port 10000
 EXPOSE 10000
 
-# 7. Start Uvicorn using the dynamic PORT variable provided by Render
+# 8. Start Uvicorn using the dynamic PORT variable provided by Render
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000}"]
