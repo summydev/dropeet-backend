@@ -1,7 +1,7 @@
 # 1. Use Microsoft's official Playwright Python image as the foundation.
 # This comes pre-packaged with all the Linux OS graphics libraries 
 # required to run headless Chromium without throwing errors.
-FROM mcr.microsoft.com/playwright/python:v1.44.0-jammy
+FROM mcr.microsoft.com/playwright/python:v1.60.0-jammy
 
 # 2. Establish the internal working directory
 WORKDIR /app
