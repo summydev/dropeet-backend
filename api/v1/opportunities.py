@@ -69,3 +69,27 @@ async def update_and_sync_opportunity(
     db.refresh(opp)
     
     return opp
+
+@router.delete("/{opportunity_id}")
+async def delete_opportunity(
+    opportunity_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user) # Security checkpoint
+):
+    """Deletes a specific opportunity draft."""
+    
+    # 1. Find the opportunity and verify ownership
+    opp = db.query(Opportunity).filter(
+        Opportunity.id == opportunity_id,
+        Opportunity.user_id == current_user.id
+    ).first()
+
+    # 2. Throw a 404 if it doesn't exist or doesn't belong to them
+    if not opp:
+        raise HTTPException(status_code=404, detail="Opportunity not found.")
+
+    # 3. Delete from database and commit
+    db.delete(opp)
+    db.commit()
+
+    return {"status": "success", "message": "Draft deleted successfully."}
