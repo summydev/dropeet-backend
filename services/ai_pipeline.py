@@ -3,15 +3,14 @@ import logging
 from typing import Optional, List
 from openai import OpenAI
 from pydantic import ValidationError
-from schemas.opportunity import OpportunityData
+from schemas.opportunity import OpportunityList
 
 logger = logging.getLogger(__name__)
 
-def extract_opportunity_details_deepseek(cleaned_text: str) -> Optional[dict]:
+def extract_opportunity_details_deepseek(cleaned_text: str) -> Optional[List[dict]]:
     """
-    Passes scraped text to DeepSeek to extract structured JSON data.
-    Implements a fallback loop across preferred DeepSeek tier endpoints.
-    Note: Image parameters removed as DeepSeek API is text-only.
+    Passes scraped text to DeepSeek to extract structured JSON data matching OpportunityList.
+    Always returns a list of opportunities (even if it contains only one item).
     """
     if not cleaned_text:
         logger.warning("⚠️ No text provided to AI pipeline. Aborting extraction.")
@@ -19,24 +18,21 @@ def extract_opportunity_details_deepseek(cleaned_text: str) -> Optional[dict]:
 
     logger.info("🧠 Passing raw data to DeepSeek...")
     
-    # Initialize OpenAI client with DeepSeek credentials
-    # Ensure DEEPSEEK_API_KEY is configured in your environmental variables (.env)
     client = OpenAI(
         base_url="https://api.deepseek.com/v1",
     )
     
-    # Build prompt instructions forcing JSON Array structure based on your schemas
     system_prompt = (
-        "You are an expert data extraction assistant. Analyze the provided unstructured text "
-        "and extract all relevant opportunity configurations (titles, application links, deadlines). "
-        "You must output valid JSON matching the expected keys strictly. Do not include markdown blocks."
+        "You are an expert data extraction assistant. "
+        "Analyze the provided unstructured text and extract every single opportunity mentioned. "
+        "For each opportunity, extract the title, organization, deadline, and a brief summary. "
+        "If a deadline is not provided, set its value to null. "
+        "Return a single valid JSON object with an 'opportunities' key whose value is an array of opportunity objects. "
+        "Do not summarize, merge, omit, or invent opportunities. "
+        "Output only valid JSON with no markdown formatting elements or extra conversational tokens."
     )
     
     user_content = f"Extract the core opportunity details from this data:\n\n{cleaned_text}"
-
-    # ---------------------------------------------------------
-    # DEEPSEEK MODEL FALLBACK LOOP
-    # ---------------------------------------------------------
     preferred_models = ["deepseek-chat"]
     
     for model_name in preferred_models:
@@ -49,7 +45,6 @@ def extract_opportunity_details_deepseek(cleaned_text: str) -> Optional[dict]:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_content}
                 ],
-                # Enforce JSON formatting structure natively
                 response_format={"type": "json_object"},
                 temperature=0.1
             )
@@ -57,14 +52,16 @@ def extract_opportunity_details_deepseek(cleaned_text: str) -> Optional[dict]:
             raw_json_string = response.choices[0].message.content
             parsed_data = json.loads(raw_json_string)
             
-            # Explicitly validate the structure against your Pydantic schema
+            # Use our unified container validation wrapper
             try:
-                validated_data = OpportunityData(**parsed_data)
-                return validated_data.model_dump()
+                validated_container = OpportunityList(**parsed_data)
+                return [opp.model_dump() for opp in validated_container.opportunities]
             except ValidationError as ve:
-                logger.error(f"❌ Structural validation mismatch against OpportunityData schema: {ve}")
-                # Fallback path if deepseek structure missed a key parameter validation 
-                return parsed_data
+                logger.error(f"❌ Structural validation mismatch against OpportunityList schema: {ve}")
+                # Fallback extraction parsing step if deepseek returns a direct array configuration object
+                if isinstance(parsed_data, dict) and "opportunities" in parsed_data:
+                    return parsed_data["opportunities"]
+                return [parsed_data] if isinstance(parsed_data, dict) else None
             
         except Exception as e:
             if "429" in str(e) or "503" in str(e) or "502" in str(e):

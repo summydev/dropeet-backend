@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from database.models import OpportunityStatus
 
@@ -22,11 +22,15 @@ class OpportunityUpdateRequest(BaseModel):
 # 2. AI Extraction Schemas
 # ==========================================
 class OpportunityData(BaseModel):
-    """The strict JSON schema that DeepSeek is forced to adhere to via the API."""
+    """The strict inner schema for a single extracted opportunity configuration."""
     title: str = Field(description="The title of the job, internship, scholarship, or opportunity")
     organization: str = Field(description="The company, institution, or organization offering it")
     deadline: Optional[str] = Field(description="The application deadline in YYYY-MM-DD format. Return None if not explicitly found.")
     summary: str = Field(description="A brief 2-sentence summary of the opportunity, including eligibility or key requirements.")
+
+class OpportunityList(BaseModel):
+    """The mandatory uniform container format that DeepSeek will ALWAYS match against."""
+    opportunities: List[OpportunityData] = Field(description="List of extracted opportunity configurations discovered in the content payload.")
 
 # ==========================================
 # 3. API Output Schemas
@@ -43,6 +47,4 @@ class OpportunityResponse(BaseModel):
     calendar_event_id: Optional[str]
     created_at: datetime
 
-    # This configuration is crucial: it tells Pydantic to read the data 
-    # directly from your SQLAlchemy database models!
     model_config = ConfigDict(from_attributes=True)

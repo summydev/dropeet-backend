@@ -13,7 +13,6 @@ async def fetch_from_brightdata(url: str) -> str:
     """
     logger.info(f"🌐 Routing link through Bright Data proxy: {url}")
     
-    # Ensure BRIGHTDATA_API_KEY is defined in your environment variable configuration (.env)
     api_key = os.getenv("BRIGHTDATA_API_KEY")
     brightdata_endpoint = "https://api.brightdata.com/dca/trigger" 
     
@@ -28,7 +27,6 @@ async def fetch_from_brightdata(url: str) -> str:
             response = await client.post(brightdata_endpoint, headers=headers, json=payload, timeout=30.0)
             if response.status_code == 200:
                 data = response.json()
-                # Dynamically match content/text attributes based on the Data Collector parser schema map
                 return data.get("text") or data.get("caption") or ""
             else:
                 logger.error(f"⚠️ Bright Data returned error status {response.status_code}: {response.text}")
@@ -56,7 +54,6 @@ async def scrape_webpage(url: str) -> Tuple[str, Optional[bytes], Optional[str]]
         page = await context.new_page()
         
         try:
-            # Bypass social media trackers by waiting for DOM instead of network idle
             await page.goto(url, wait_until="domcontentloaded", timeout=20000)
             await page.wait_for_timeout(4000) 
             
@@ -64,7 +61,6 @@ async def scrape_webpage(url: str) -> Tuple[str, Optional[bytes], Optional[str]]
             soup = BeautifulSoup(html, "html.parser")
             cleaned_text = soup.get_text(separator="\n", strip=True)
             
-            # Look for flyer graphics
             img_element = await page.query_selector("meta[property='og:image']")
             if img_element:
                 img_url = await img_element.get_attribute("content")
@@ -75,7 +71,6 @@ async def scrape_webpage(url: str) -> Tuple[str, Optional[bytes], Optional[str]]
                             image_bytes = img_response.content
                             image_mime = "image/jpeg" if "jpg" in img_url or "jpeg" in img_url else "image/png"
             
-            # Secondary flyer fallback
             if not image_bytes:
                 post_element = await page.query_selector("article, .feed-shared-update-v2__content, #main-content")
                 if post_element:
