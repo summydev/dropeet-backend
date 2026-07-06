@@ -1,3 +1,4 @@
+import os
 import json
 import logging
 from typing import Optional, List
@@ -18,8 +19,17 @@ def extract_opportunity_details_deepseek(cleaned_text: str) -> Optional[List[dic
 
     logger.info("🧠 Passing raw data to DeepSeek...")
     
+    # 1. Grab your DeepSeek key from the environment variables
+    deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+    
+    if not deepseek_key:
+        logger.error("❌ DEEPSEEK_API_KEY is missing from environment variables.")
+        return None
+
+    # 2. Explicitly pass the key to the client
     client = OpenAI(
         base_url="https://api.deepseek.com/v1",
+        api_key=deepseek_key
     )
     
     system_prompt = (
