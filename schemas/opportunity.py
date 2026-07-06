@@ -9,6 +9,7 @@ from database.models import OpportunityStatus
 class LinkRequest(BaseModel):
     """Payload received from the frontend when a user drops a link."""
     url: str = Field(..., description="The URL of the opportunity to scrape")
+    auto_sync: bool = Field(default=False, description="Whether to automatically push to Google Calendar after extraction")
 
 class OpportunityUpdateRequest(BaseModel):
     """Payload received when a user edits an opportunity and wants to sync it."""
@@ -21,7 +22,7 @@ class OpportunityUpdateRequest(BaseModel):
 # 2. AI Extraction Schemas
 # ==========================================
 class OpportunityData(BaseModel):
-    """The strict JSON schema that Gemini is forced to adhere to."""
+    """The strict JSON schema that DeepSeek is forced to adhere to via the API."""
     title: str = Field(description="The title of the job, internship, scholarship, or opportunity")
     organization: str = Field(description="The company, institution, or organization offering it")
     deadline: Optional[str] = Field(description="The application deadline in YYYY-MM-DD format. Return None if not explicitly found.")

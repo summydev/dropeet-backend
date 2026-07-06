@@ -1,3 +1,4 @@
+import os
 import httpx
 import logging
 from bs4 import BeautifulSoup
@@ -6,9 +7,40 @@ from typing import Tuple, Optional
 
 logger = logging.getLogger(__name__)
 
+async def fetch_from_brightdata(url: str) -> str:
+    """
+    Sends social media URLs (LinkedIn/Instagram) to Bright Data to bypass login walls.
+    """
+    logger.info(f"🌐 Routing link through Bright Data proxy: {url}")
+    
+    # Ensure BRIGHTDATA_API_KEY is defined in your environment variable configuration (.env)
+    api_key = os.getenv("BRIGHTDATA_API_KEY")
+    brightdata_endpoint = "https://api.brightdata.com/dca/trigger" 
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {"url": url}
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(brightdata_endpoint, headers=headers, json=payload, timeout=30.0)
+            if response.status_code == 200:
+                data = response.json()
+                # Dynamically match content/text attributes based on the Data Collector parser schema map
+                return data.get("text") or data.get("caption") or ""
+            else:
+                logger.error(f"⚠️ Bright Data returned error status {response.status_code}: {response.text}")
+                return ""
+    except Exception as e:
+        logger.error(f"❌ Failed connecting to Bright Data API wrapper: {e}")
+        return ""
+
+
 async def scrape_webpage(url: str) -> Tuple[str, Optional[bytes], Optional[str]]:
     """
-    Scrapes a URL using Playwright, extracting text and any relevant OG images/flyers.
+    Scrapes a standard URL using Playwright, extracting text and any relevant OG images/flyers.
     Returns: (cleaned_text, image_bytes, image_mime)
     """
     logger.info(f"🤖 Scraping webpage with Playwright: {url}")

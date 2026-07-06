@@ -20,8 +20,8 @@ async def add_opportunity(
     if not request.url.startswith("http"):
         raise HTTPException(status_code=400, detail="Invalid URL provided.")
 
-    # Handoff to background worker with the authenticated user's ID
-    background_tasks.add_task(process_link_task, request.url, current_user.id)
+    # Handoff to background worker with the authenticated user's ID AND the auto_sync flag
+    background_tasks.add_task(process_link_task, request.url, current_user.id, request.auto_sync)
     
     return {"status": "success", "message": "Link ingested and queued for extraction."}
 
