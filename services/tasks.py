@@ -1,37 +1,45 @@
 import logging
-import asyncio  # 1. IMPORT ASYNCIO HERE
+import asyncio
 from datetime import datetime, timezone
 from database.session import SessionLocal
-from database.models import Opportunity
-from services.scraper import scrape_webpage
-from services.ai_pipeline import extract_opportunity_details
+from database.models import Opportunity, OpportunityStatus
+
+# Import both standard scraping and Bright Data routers
+from services.scraper import scrape_webpage, fetch_from_brightdata
+
+# Note: Corrected import pointing to your actual file name
+from services.ai_pipeline import extract_opportunity_details_deepseek
+
+from services.google_calendar import sync_to_google_calendar
 
 logger = logging.getLogger(__name__)
 
-# 2. DEFINE THE SEMAPHORE HERE at the module level.
-# This acts as the bouncer, ensuring only 1 background task runs at a time.
+# Single task concurrency bouncer
 scraping_semaphore = asyncio.Semaphore(1)
 
-async def process_link_task(url: str, user_id: int):
+async def process_link_task(url: str, user_id: int, auto_sync: bool):
     """
-    The main background worker pipeline: Scrape -> AI Extract -> Save DB.
-    (Calendar sync is now triggered manually by the user via the frontend).
+    The main background worker pipeline: Domain Check Router -> Scrape -> DeepSeek Extract -> Save DB -> Contextual Auto-Sync.
     """
     
-    # 3. WRAP THE ENTIRE PROCESSING LOGIC IN THE SEMAPHORE
     async with scraping_semaphore:
         logger.info(f"🚦 Worker picked up link from queue: {url}")
 
-        # 1. Scrape the URL (This runs safely knowing no other browser instance is active)
-        cleaned_text, image_bytes, image_mime = await scrape_webpage(url)
+        # 1. Domain Check Router: Intercept heavy social networks
+        cleaned_text = ""
+        if "linkedin.com" in url or "instagram.com" in url:
+            cleaned_text = await fetch_from_brightdata(url)
+        else:
+            cleaned_text, _, _ = await scrape_webpage(url)
+
         if not cleaned_text:
-            logger.error(f"Pipeline aborted: Scraping failed for {url}")
+            logger.error(f"Pipeline aborted: Scraping engine returned zero payload content for {url}")
             return
 
-        # 2. Extract Data via Gemini
-        extracted_data = extract_opportunity_details(cleaned_text, image_bytes, image_mime)
+        # 2. Extract Data using DeepSeek (Text-Only structure processing)
+        extracted_data = extract_opportunity_details_deepseek(cleaned_text)
         if not extracted_data:
-            logger.error(f"Pipeline aborted: AI extraction failed for {url}")
+            logger.error(f"Pipeline aborted: DeepSeek extraction failed for {url}")
             return
 
         # 3. Save to Database as a Draft
@@ -50,14 +58,25 @@ async def process_link_task(url: str, user_id: int):
                 organization=extracted_data.get("organization"),
                 deadline=parsed_deadline,
                 summary=extracted_data.get("summary"),
-                source_url=url
+                source_url=url,
+                status=OpportunityStatus.PENDING
             )
             db.add(new_opp)
             db.commit()
             db.refresh(new_opp)
             logger.info(f"✅ Saved Draft to DB: {new_opp.title}")
             
-            # NOTE: Auto-sync removed! The frontend will trigger the sync after user confirmation.
+            # 4. Perform background sync ONLY if user checked the consent toggle
+            if auto_sync and new_opp.deadline:
+                try:
+                    logger.info(f"🔄 Auto-sync requested. Syncing {new_opp.title} to Google Calendar...")
+                    sync_to_google_calendar(new_opp, db)
+                    new_opp.status = OpportunityStatus.ACTIONED
+                    db.commit()
+                    logger.info(f"📆 Background calendar sync complete for: {new_opp.title}")
+                except Exception as cal_err:
+                    logger.error(f"❌ Background Calendar Sync Failure: {cal_err}")
+                    # Keep status as PENDING so they can review and click sync manually on the dashboard
                 
         except Exception as e:
             logger.error(f"❌ Worker Database Failure: {e}")
