@@ -1,38 +1,58 @@
 import os
-import httpx
+import json
 import logging
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 from typing import Tuple, Optional
 
+# Import the new Bright Data SDK
+from brightdata import BrightDataClient
+
 logger = logging.getLogger(__name__)
 
 async def fetch_from_brightdata(url: str) -> str:
     """
-    Sends social media URLs (LinkedIn/Instagram) to Bright Data to bypass login walls.
+    Uses the official Bright Data SDK to scrape LinkedIn/Instagram using their pre-built platform scrapers.
     """
-    logger.info(f"🌐 Routing link through Bright Data proxy: {url}")
+    logger.info(f"🌐 Routing link through Bright Data SDK: {url}")
     
+    # Pull the key from Render (ensure this matches your dashboard exactly)
     api_key = os.getenv("BRIGHTDATA_API_KEY")
-    brightdata_endpoint = "https://api.brightdata.com/dca/trigger" 
     
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    payload = {"url": url}
-    
+    if not api_key:
+        logger.error("❌ BRIGHTDATA_API_KEY is missing from environment variables.")
+        return ""
+
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(brightdata_endpoint, headers=headers, json=payload, timeout=30.0)
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("text") or data.get("caption") or ""
+        # Initialize the Async client
+        async with BrightDataClient(token=api_key) as client:
+            
+            # Route to the correct pre-built scraper based on the URL
+            if "linkedin.com/jobs" in url:
+                logger.info("Using LinkedIn Jobs scraper...")
+                response = await client.scrape.linkedin.jobs(url=url)
+            elif "linkedin.com" in url:
+                logger.info("Using LinkedIn Posts scraper...")
+                response = await client.scrape.linkedin.posts(url=url)
+            elif "instagram.com" in url:
+                logger.info("Using Instagram Posts scraper...")
+                response = await client.scrape.instagram.posts(url=url)
             else:
-                logger.error(f"⚠️ Bright Data returned error status {response.status_code}: {response.text}")
+                logger.info("Using generic URL web unlocker...")
+                response = await client.scrape_url(url)
+            
+            # The SDK returns a structured object where .data contains the payload
+            if response and hasattr(response, 'data') and response.data:
+                logger.info("✅ Bright Data successfully extracted content!")
+                # Convert the raw extracted data (usually a dict or list) into a string 
+                # so our DeepSeek AI pipeline can read and extract from it seamlessly!
+                return json.dumps(response.data)
+            else:
+                logger.error(f"⚠️ Bright Data returned empty data for {url}")
                 return ""
+                
     except Exception as e:
-        logger.error(f"❌ Failed connecting to Bright Data API wrapper: {e}")
+        logger.error(f"❌ Bright Data SDK failed: {e}")
         return ""
 
 
