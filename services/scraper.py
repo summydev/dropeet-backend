@@ -2,6 +2,7 @@ import os
 import json
 import logging
 from bs4 import BeautifulSoup
+import httpx
 from playwright.async_api import async_playwright
 from typing import Tuple, Optional
 
