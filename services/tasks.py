@@ -14,25 +14,35 @@ scraping_semaphore = asyncio.Semaphore(1)
 
 async def process_link_task(url: str, user_id: int, auto_sync: bool):
     """
-    The main background worker pipeline: Domain Check Router -> Scrape -> DeepSeek Extract -> Loop & Save DB Entries -> Contextual Auto-Sync.
+    The main background worker pipeline: Domain Check Router -> Waterfall Scrape -> DeepSeek Extract -> Loop & Save DB Entries -> Contextual Auto-Sync.
     """
     
     async with scraping_semaphore:
         logger.info(f"🚦 Worker picked up link from queue: {url}")
 
-        # 1. Domain Check Router: Intercept heavy security networks
+        # 1. Domain Check Router & The "Waterfall" Fallback
         cleaned_text = ""
-        
-        # We put domains that aggressively block free scrapers into this list
         heavy_domains = ["linkedin.com", "instagram.com", "glassdoor.com"]
         
         if any(domain in url for domain in heavy_domains):
+            logger.info(f"🛡️ Heavy domain detected. Attempting Bright Data unlocker...")
             cleaned_text = await fetch_from_brightdata(url)
+            
+            # THE WATERFALL: If Bright Data gets blocked, try Playwright as a backup!
+            if not cleaned_text:
+                logger.warning(f"⚠️ Bright Data failed on {url}. Falling back to local Playwright scraper...")
+                cleaned_text, _, _ = await scrape_webpage(url)
         else:
+            logger.info(f"📄 Standard domain detected. Attempting local Playwright scraper...")
             cleaned_text, _, _ = await scrape_webpage(url)
+            
+            # REVERSE WATERFALL: If Playwright gets blocked, try Bright Data as a backup!
+            if not cleaned_text:
+                logger.warning(f"⚠️ Playwright failed on {url}. Falling back to Bright Data unlocker...")
+                cleaned_text = await fetch_from_brightdata(url)
 
         if not cleaned_text:
-            logger.error(f"Pipeline aborted: Scraping engine returned zero payload content for {url}")
+            logger.error(f"❌ Pipeline aborted: All scraping engines returned zero payload content for {url}")
             return
 
         # 2. Extract Data using DeepSeek (Will ALWAYS return a list of items)
@@ -78,7 +88,6 @@ async def process_link_task(url: str, user_id: int, auto_sync: bool):
                         logger.info(f"📆 Background calendar sync complete for: {new_opp.title}")
                     except Exception as cal_err:
                         logger.error(f"❌ Background Calendar Sync Failure for {new_opp.title}: {cal_err}")
-                        # Leave transaction record state as PENDING for safe dashboard tracking fallbacks
                 
         except Exception as e:
             logger.error(f"❌ Worker Database Failure during array injection sequence: {e}")

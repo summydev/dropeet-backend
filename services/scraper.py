@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 
 async def fetch_from_brightdata(url: str) -> str:
     """
-    Uses the official Bright Data SDK to scrape LinkedIn/Instagram using their pre-built platform scrapers.
+    Uses the official Bright Data SDK to scrape LinkedIn/Instagram using their pre-built platform scrapers,
+    and uses the generic Web Unlocker for other URLs.
     """
     logger.info(f"🌐 Routing link through Bright Data SDK: {url}")
     
@@ -42,11 +43,22 @@ async def fetch_from_brightdata(url: str) -> str:
                 logger.info("Using generic URL web unlocker...")
                 response = await client.scrape_url(url)
             
+            # Check for API-level failures
+            if hasattr(response, 'success') and not response.success:
+                 logger.error(f"⚠️ Bright Data failed to extract {url}. Error: {getattr(response, 'error', 'Unknown')}")
+                 return ""
+
             # The SDK returns a structured object where .data contains the payload
             if response and hasattr(response, 'data') and response.data:
                 logger.info("✅ Bright Data successfully extracted content!")
-                # Convert the raw extracted data (usually a dict or list) into a string 
-                # so our DeepSeek AI pipeline can read and extract from it seamlessly!
+                
+                # If Bright Data returns raw HTML (generic websites like Glassdoor)
+                if isinstance(response.data, str):
+                    # Use BeautifulSoup to strip out all the messy HTML tags
+                    soup = BeautifulSoup(response.data, "html.parser")
+                    return soup.get_text(separator="\n", strip=True)
+                    
+                # If Bright Data returns structured JSON (LinkedIn/Instagram)
                 return json.dumps(response.data)
             else:
                 logger.error(f"⚠️ Bright Data returned empty data for {url}")
