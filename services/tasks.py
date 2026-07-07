@@ -20,9 +20,13 @@ async def process_link_task(url: str, user_id: int, auto_sync: bool):
     async with scraping_semaphore:
         logger.info(f"🚦 Worker picked up link from queue: {url}")
 
-        # 1. Domain Check Router: Intercept heavy social networks
+        # 1. Domain Check Router: Intercept heavy security networks
         cleaned_text = ""
-        if "linkedin.com" in url or "instagram.com" in url:
+        
+        # We put domains that aggressively block free scrapers into this list
+        heavy_domains = ["linkedin.com", "instagram.com", "glassdoor.com"]
+        
+        if any(domain in url for domain in heavy_domains):
             cleaned_text = await fetch_from_brightdata(url)
         else:
             cleaned_text, _, _ = await scrape_webpage(url)
