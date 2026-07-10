@@ -1,7 +1,8 @@
 import enum
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Enum
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Enum,JSON
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 from database.session import Base
 
 class OpportunityStatus(enum.Enum):
@@ -63,3 +64,17 @@ class Opportunity(Base):
 
     # Relationships
     owner = relationship("User", back_populates="opportunities")
+
+class Report(Base):
+    __tablename__ = "reports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # Link it to the user who submitted the report
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # Store the reason and optional message
+    reason = Column(String, nullable=False)
+    message = Column(Text, nullable=True)
+    # Store the entire exact payload of the card that failed
+    card_details = Column(JSON, nullable=False)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
