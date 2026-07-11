@@ -4,6 +4,7 @@ from config.settings import settings
 
 from api.v1.opportunities import router as opportunities_router
 from api.v1.auth import router as auth_router
+from api.v1.reports import router as report_router
 
 # --- 1. ADD YOUR DATABASE IMPORTS HERE ---
 # Note: Ensure 'engine' is correctly imported from wherever you defined it 
