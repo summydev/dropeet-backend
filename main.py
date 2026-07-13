@@ -6,13 +6,10 @@ from api.v1.opportunities import router as opportunities_router
 from api.v1.auth import router as auth_router
 from api.v1.reports import router as reports_router
 
-# --- 1. ADD YOUR DATABASE IMPORTS HERE ---
-# Note: Ensure 'engine' is correctly imported from wherever you defined it 
-# (usually database.session or database.database)
+ 
 from database.session import engine
 from database.models import Base
 
-# This tells SQLAlchemy to look at your models and create any missing tables automatically!
 Base.metadata.create_all(bind=engine)
 
 
