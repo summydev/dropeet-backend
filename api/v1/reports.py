@@ -5,7 +5,7 @@ from database.models import Report
 from schemas.report import ReportCreate, ReportResponse
 
 # Import your auth dependency (adjust the import path based on where you keep it)
-from api.dependencies import get_current_user 
+from api.deps import get_current_user 
 
 router = APIRouter()
 
