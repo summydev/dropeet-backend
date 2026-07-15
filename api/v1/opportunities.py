@@ -1,3 +1,4 @@
+import logging
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
@@ -7,6 +8,8 @@ from database.models import Opportunity, User, OpportunityStatus
 from services.tasks import process_link_task
 from services.google_calendar import sync_to_google_calendar
 from api.deps import get_db, get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/opportunities", tags=["Opportunities"])
 
@@ -42,7 +45,10 @@ async def update_and_sync_opportunity(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Allows users to edit an opportunity and explicitly sync it to their calendar."""
+    """
+    Allows users to edit an opportunity. 
+    If a deadline is set, it performs a clean sync to their Google Calendar.
+    """
     
     # 1. Find the opportunity and ensure this user actually owns it
     opp = db.query(Opportunity).filter(
@@ -53,18 +59,29 @@ async def update_and_sync_opportunity(
     if not opp:
         raise HTTPException(status_code=404, detail="Opportunity not found.")
 
-    # 2. Apply the user's edits
+    # 2. Check if the deadline is being changed
+    deadline_changed = opp.deadline != request.deadline
+
+    # 3. Apply the user's edits
     opp.title = request.title
     opp.organization = request.organization
     opp.deadline = request.deadline
     opp.summary = request.summary
     
-    # 3. Push to Google Calendar using your existing service
+    # 4. Push to Google Calendar with safety checks
     if opp.deadline:
-        sync_to_google_calendar(opp, db)
-        # Update the status to show it's been handled!
-        opp.status = OpportunityStatus.ACTIONED 
-    
+        try:
+            # Only sync if the status wasn't actioned yet, OR if they changed the deadline date
+            if opp.status != OpportunityStatus.ACTIONED or deadline_changed:
+                logger.info(f"🔄 Syncing updated details/deadline for: {opp.title}")
+                
+                # Hand it over to your Google Calendar service
+                sync_to_google_calendar(opp, db)
+                opp.status = OpportunityStatus.ACTIONED 
+        except Exception as e:
+            # Log the error but don't crash the update; let the user still save their text edits
+            logger.error(f"❌ Failed to sync updated opportunity to Google Calendar: {e}")
+
     db.commit()
     db.refresh(opp)
     

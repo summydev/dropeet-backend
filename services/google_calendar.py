@@ -9,7 +9,7 @@ from database.models import Opportunity, GoogleCredential
 logger = logging.getLogger(__name__)
 
 def sync_to_google_calendar(opportunity: Opportunity, db: Session):
-    """Silently pushes an opportunity deadline to the user's Google Calendar."""
+    """Silently pushes (or updates) an opportunity deadline on the user's Google Calendar."""
     
     if not opportunity.deadline:
         logger.info(f"No deadline for Opp {opportunity.id}. Skipping calendar sync.")
@@ -61,14 +61,29 @@ def sync_to_google_calendar(opportunity: Opportunity, db: Session):
             },
         }
 
-        # 5. Insert the event into their primary calendar
+        # 5. Insert OR Update the event
+        if opportunity.calendar_event_id:
+            try:
+                # Attempt to update the existing event
+                service.events().update(
+                    calendarId='primary', 
+                    eventId=opportunity.calendar_event_id, 
+                    body=event_body
+                ).execute()
+                logger.info(f"📅 Successfully UPDATED Opp {opportunity.id} on Google Calendar!")
+                return  # Exit early, we don't need to save the ID again
+            except Exception as update_err:
+                logger.warning(f"Could not update event {opportunity.calendar_event_id} (user may have manually deleted it). Creating a new one. Error: {update_err}")
+                # If the update fails (like a 404 Not Found), fall through to the insert logic below
+
+        # 6. Create a brand new event
         created_event = service.events().insert(calendarId='primary', body=event_body).execute()
         
-        # 6. Save the Google Event ID back to your database in case they delete it later
+        # 7. Save the Google Event ID back to your database
         opportunity.calendar_event_id = created_event.get('id')
         db.commit()
         
-        logger.info(f"📅 Successfully synced Opp {opportunity.id} to Google Calendar!")
+        logger.info(f"📅 Successfully INSERTED Opp {opportunity.id} to Google Calendar!")
         
     except Exception as e:
         logger.error(f"❌ Failed to sync to Google Calendar: {e}")
