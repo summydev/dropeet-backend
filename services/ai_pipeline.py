@@ -33,13 +33,19 @@ def extract_opportunity_details_deepseek(cleaned_text: str) -> Optional[List[dic
     )
     
     system_prompt = (
-        "You are an expert data extraction assistant. "
-        "Analyze the provided unstructured text and extract every single opportunity mentioned. "
-        "For each opportunity, extract the title, organization, deadline, and a brief summary. "
-        "If a deadline is not provided, set its value to null. "
-        "Return a single valid JSON object with an 'opportunities' key whose value is an array of opportunity objects. "
-        "Do not summarize, merge, omit, or invent opportunities. "
-        "Output only valid JSON with no markdown formatting elements or extra conversational tokens."
+        "You are an expert data extraction assistant for a career tracking tool. "
+        "Analyze the unstructured text and extract every opportunity mentioned into a JSON object "
+        "with an 'opportunities' key containing an array of opportunity objects. "
+        "CRITICAL RULES TO PREVENT HALLUCINATIONS:\n"
+        "1. DO NOT GUESS OR INVENT DATA. Treat the scraped text as absolute law.\n"
+        "2. If the application deadline is not explicitly stated, you MUST set 'deadline' to null. "
+        "Do not guess based on the posting date or standard timeframes.\n"
+        "3. If the organization name is not clear, set it to 'Unknown'.\n"
+        "REQUIRED DOCUMENTS:\n"
+        "Scan the text for what the applicant needs to submit. Return this as a 'required_documents' "
+        "key containing an array of strings (e.g., ['Resume', 'Cover Letter', 'Transcript']). "
+        "If none are mentioned, return an empty array [].\n"
+        "Output ONLY valid JSON with no markdown formatting elements or extra conversational tokens."
     )
     
     user_content = f"Extract the core opportunity details from this data:\n\n{cleaned_text}"
