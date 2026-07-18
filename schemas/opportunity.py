@@ -17,6 +17,8 @@ class OpportunityUpdateRequest(BaseModel):
     organization: Optional[str] = None
     deadline: Optional[datetime] = None
     summary: Optional[str] = None
+    application_status: Optional[str] = None
+    required_documents: Optional[List[str]] = None
 
 # ==========================================
 # 2. AI Extraction Schemas
@@ -27,6 +29,7 @@ class OpportunityData(BaseModel):
     organization: str = Field(description="The company, institution, or organization offering it")
     deadline: Optional[str] = Field(description="The application deadline in YYYY-MM-DD format. Return None if not explicitly found.")
     summary: str = Field(description="A brief 2-sentence summary of the opportunity, including eligibility or key requirements.")
+    required_documents: List[str] = Field(default_factory=list, description="Array of required documents (e.g., ['Resume', 'Cover Letter']). Return an empty array [] if none are mentioned.")
 
 class OpportunityList(BaseModel):
     """The mandatory uniform container format that DeepSeek will ALWAYS match against."""
@@ -44,6 +47,8 @@ class OpportunityResponse(BaseModel):
     summary: Optional[str]
     source_url: str
     status: OpportunityStatus
+    application_status: str
+    required_documents: List[str]
     calendar_event_id: Optional[str]
     created_at: datetime
 

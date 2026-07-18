@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Enum,JSON
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Enum, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database.session import Base
@@ -58,7 +58,13 @@ class Opportunity(Base):
     summary = Column(Text, nullable=True)
     source_url = Column(String, nullable=False)
     
+    # App Tracking Status (Is it pending user review, actioned/synced, or discarded?)
     status = Column(Enum(OpportunityStatus), default=OpportunityStatus.PENDING)
+    
+    # Real-world Application Status & Requirements
+    application_status = Column(String, default="Pending") # e.g., Pending, Applied, Interviewing, Rejected
+    required_documents = Column(JSON, default=list)        # e.g., ["Resume", "Cover Letter"]
+    
     calendar_event_id = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
