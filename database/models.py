@@ -20,7 +20,7 @@ class User(Base):
     # Relationships
     opportunities = relationship("Opportunity", back_populates="owner", cascade="all, delete-orphan")
     google_credentials = relationship("GoogleCredential", back_populates="user", uselist=False, cascade="all, delete-orphan")
-
+    linkedin_cookies = Column(JSON, nullable=True, default=None) 
 
 class GoogleCredential(Base):
     __tablename__ = "google_credentials"

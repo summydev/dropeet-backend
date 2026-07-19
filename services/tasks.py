@@ -1,68 +1,75 @@
+# services/tasks.py
+
+import os
 import logging
 import asyncio
 from datetime import datetime, timezone
 from database.session import SessionLocal
-from database.models import Opportunity, OpportunityStatus
-
-from services.scraper import scrape_webpage, fetch_from_brightdata
+from database.models import Opportunity, OpportunityStatus, User
+from services.scraper import scrape_url_self_built
 from services.ai_pipeline import extract_opportunity_details_deepseek
 from services.google_calendar import sync_to_google_calendar
 
 logger = logging.getLogger(__name__)
-
 scraping_semaphore = asyncio.Semaphore(1)
 
 async def process_link_task(url: str, user_id: int, auto_sync: bool):
-    """
-    The main background worker pipeline: Domain Check Router -> Waterfall Scrape -> DeepSeek Extract -> Loop & Save DB Entries -> Contextual Auto-Sync.
-    """
-    
     async with scraping_semaphore:
-        logger.info(f"🚦 Worker picked up link from queue: {url}")
+        logger.info(f"🚦 Processing: {url}")
 
-        # 1. Domain Check Router & The "Waterfall" Fallback
-        cleaned_text = ""
-        heavy_domains = ["linkedin.com", "instagram.com", "glassdoor.com"]
-        
-        if any(domain in url for domain in heavy_domains):
-            logger.info(f"🛡️ Heavy domain detected. Attempting Bright Data unlocker...")
-            cleaned_text = await fetch_from_brightdata(url)
-            
-            # THE WATERFALL: If Bright Data gets blocked, try Playwright as a backup!
-            if not cleaned_text:
-                logger.warning(f"⚠️ Bright Data failed on {url}. Falling back to local Playwright scraper...")
-                cleaned_text, _, _ = await scrape_webpage(url)
-        else:
-            logger.info(f"📄 Standard domain detected. Attempting local Playwright scraper...")
-            cleaned_text, _, _ = await scrape_webpage(url)
-            
-            # REVERSE WATERFALL: If Playwright gets blocked, try Bright Data as a backup!
-            if not cleaned_text:
-                logger.warning(f"⚠️ Playwright failed on {url}. Falling back to Bright Data unlocker...")
-                cleaned_text = await fetch_from_brightdata(url)
-
-        if not cleaned_text:
-            logger.error(f"❌ Pipeline aborted: All scraping engines returned zero payload content for {url}")
-            return
-
-        # 2. Extract Data using DeepSeek (Will ALWAYS return a list of items)
-        extracted_opportunities = extract_opportunity_details_deepseek(cleaned_text)
-        if not extracted_opportunities:
-            logger.error(f"Pipeline aborted: DeepSeek extraction failed or returned zero array rows for {url}")
-            return
-
-        # 3. Open Session and Loop Save Database Records
+        # 1. Get the user's saved LinkedIn cookies (if any)
         db = SessionLocal()
         try:
-            logger.info(f"🗄️ Ingesting {len(extracted_opportunities)} parsed configuration items into DB context...")
-            
-            for opp_data in extracted_opportunities:
+            user = db.query(User).filter(User.id == user_id).first()
+            linkedin_cookies = user.linkedin_cookies if user else None
+        finally:
+            db.close()
+
+        # 2. Configure proxy (optional – if you have one)
+        proxy = None
+        if os.getenv("RESIDENTIAL_PROXY_HOST"):
+            proxy = {
+                "server": os.getenv("RESIDENTIAL_PROXY_HOST"),
+                "username": os.getenv("RESIDENTIAL_PROXY_USER"),
+                "password": os.getenv("RESIDENTIAL_PROXY_PASS"),
+            }
+
+        # 3. Scrape using self‑built stack
+        #    Updated scraper returns: (cleaned_text, image_bytes, image_mime, raw_html)
+        cleaned_text, _, _, raw_html = await scrape_url_self_built(
+            url,
+            user_cookies=linkedin_cookies,
+            proxy=proxy
+        )
+
+        if not cleaned_text:
+            logger.error(f"❌ No content extracted from {url}")
+            return
+
+        # 4. Hybrid AI extraction (local first, then DeepSeek fallback)
+        extracted = extract_opportunity_details_deepseek(
+            cleaned_text,
+            html=raw_html,        # pass raw HTML for local extraction
+            url=url
+        )
+        if not extracted:
+            logger.error("❌ All extraction methods failed")
+            return
+
+        # 5. Save to DB and optionally sync (same as before)
+        db = SessionLocal()
+        try:
+            for opp_data in extracted:
                 parsed_deadline = None
                 if opp_data.get("deadline"):
                     try:
-                        parsed_deadline = datetime.strptime(opp_data["deadline"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                        parsed_deadline = datetime.strptime(
+                            opp_data["deadline"], "%Y-%m-%d"
+                        ).replace(tzinfo=timezone.utc)
                     except ValueError:
-                        logger.warning(f"Could not parse deadline string: {opp_data.get('deadline')}")
+                        logger.warning(
+                            f"Invalid deadline string: {opp_data.get('deadline')}"
+                        )
 
                 new_opp = Opportunity(
                     user_id=user_id,
@@ -71,25 +78,19 @@ async def process_link_task(url: str, user_id: int, auto_sync: bool):
                     deadline=parsed_deadline,
                     summary=opp_data.get("summary"),
                     source_url=url,
-                    status=OpportunityStatus.PENDING
+                    status=OpportunityStatus.PENDING,
+                    required_documents=opp_data.get("required_documents", []),
                 )
                 db.add(new_opp)
                 db.commit()
                 db.refresh(new_opp)
-                logger.info(f"✅ Saved Draft to DB: {new_opp.title}")
-                
-                # 4. Perform background sync per element ONLY if auto_sync toggle has permission
+
                 if auto_sync and new_opp.deadline:
                     try:
-                        logger.info(f"🔄 Auto-sync requested. Syncing {new_opp.title} to Google Calendar...")
                         sync_to_google_calendar(new_opp, db)
                         new_opp.status = OpportunityStatus.ACTIONED
                         db.commit()
-                        logger.info(f"📆 Background calendar sync complete for: {new_opp.title}")
-                    except Exception as cal_err:
-                        logger.error(f"❌ Background Calendar Sync Failure for {new_opp.title}: {cal_err}")
-                
-        except Exception as e:
-            logger.error(f"❌ Worker Database Failure during array injection sequence: {e}")
+                    except Exception as e:
+                        logger.error(f"Calendar sync error: {e}")
         finally:
             db.close()

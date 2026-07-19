@@ -86,7 +86,16 @@ async def update_and_sync_opportunity(
     db.refresh(opp)
     
     return opp
-
+@router.put("/linkedin-cookies")
+async def save_linkedin_cookies(
+    cookies: dict,   # e.g. {"li_at": "AQEDAT..."}
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Stores the user's LinkedIn session cookie for scraping."""
+    current_user.linkedin_cookies = cookies
+    db.commit()
+    return {"status": "success"}
 @router.delete("/{opportunity_id}")
 async def delete_opportunity(
     opportunity_id: int,
