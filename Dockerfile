@@ -4,9 +4,6 @@ WORKDIR /app
 
 COPY requirements.txt .
 
-RUN python --version
-RUN cat requirements.txt
-
 RUN pip install --no-cache-dir -r requirements.txt
 
 ENV PLAYWRIGHT_BROWSERS_PATH=0
