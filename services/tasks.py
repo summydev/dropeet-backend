@@ -35,7 +35,6 @@ async def process_link_task(url: str, user_id: int, auto_sync: bool):
             }
 
         # 3. Scrape using self‑built stack
-        #    Updated scraper returns: (cleaned_text, image_bytes, image_mime, raw_html)
         cleaned_text, _, _, raw_html = await scrape_url_self_built(
             url,
             user_cookies=linkedin_cookies,
