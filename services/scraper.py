@@ -37,9 +37,9 @@ async def playwright_fetch(
     url: str,
     cookies: Optional[dict] = None,
     proxy: Optional[dict] = None
-) -> Tuple[Optional[str], Optional[bytes], Optional[str]]:
+) -> Tuple[Optional[str], Optional[bytes], Optional[str], Optional[str]]:
     """
-    Returns (text, image_bytes, image_mime).
+    Returns (cleaned_text, image_bytes, image_mime, raw_html).
     """
     try:
         async with async_playwright() as p:
@@ -66,9 +66,9 @@ async def playwright_fetch(
             await page.goto(url, wait_until="domcontentloaded", timeout=30000)
             await page.wait_for_timeout(4000)
 
-            html = await page.content()
-            soup = BeautifulSoup(html, "html.parser")
-            text = soup.get_text(separator="\n", strip=True)
+            raw_html = await page.content()
+            soup = BeautifulSoup(raw_html, "html.parser")
+            cleaned_text = soup.get_text(separator="\n", strip=True)
 
             # Optional image extraction
             img_bytes = None
@@ -84,28 +84,29 @@ async def playwright_fetch(
                             img_mime = "image/jpeg" if "jpg" in img_url else "image/png"
 
             await browser.close()
-            return text, img_bytes, img_mime
+            return cleaned_text, img_bytes, img_mime, raw_html
     except Exception as e:
         logger.error(f"Playwright fallback failed: {e}")
-        return None, None, None
+        return None, None, None, None
 
 # --------------------------------------------------------------------
-# 3. Main scraper – replaces fetch_from_brightdata entirely
+# 3. Main scraper – returns (cleaned_text, image_bytes, image_mime, raw_html)
 # --------------------------------------------------------------------
 async def scrape_url_self_built(
     url: str,
     user_cookies: Optional[dict] = None,
     proxy: Optional[dict] = None
-) -> Tuple[str, Optional[bytes], Optional[str]]:
+) -> Tuple[str, Optional[bytes], Optional[str], str]:
     """
-    Route all scraping through own stack.
-    Returns (cleaned_text, image_bytes, image_mime).
+    Self‑built scraper that returns cleaned text, optional image, and the raw HTML
+    for use in the local extraction pipeline.
     """
     # Step 1: try fast curl_cffi (works for many static sites)
-    html = await fetch_via_curl_cffi(url)
-    if html:
-        soup = BeautifulSoup(html, "html.parser")
-        return soup.get_text(separator="\n", strip=True), None, None
+    raw_html = await fetch_via_curl_cffi(url)
+    if raw_html:
+        soup = BeautifulSoup(raw_html, "html.parser")
+        cleaned_text = soup.get_text(separator="\n", strip=True)
+        return cleaned_text, None, None, raw_html
 
     # Step 2: Playwright with cookies (LinkedIn/Instagram) or without
     cookies_to_use = None
@@ -114,10 +115,12 @@ async def scrape_url_self_built(
         if not cookies_to_use:
             logger.warning("No LinkedIn cookies provided – scraping may fail.")
 
-    text, img_bytes, img_mime = await playwright_fetch(url, cookies=cookies_to_use, proxy=proxy)
+    text, img_bytes, img_mime, raw_html = await playwright_fetch(
+        url, cookies=cookies_to_use, proxy=proxy
+    )
     if text:
-        return text, img_bytes, img_mime
+        return text, img_bytes, img_mime, raw_html
 
     # Step 3: if everything fails
     logger.error(f"All self‑built methods exhausted for {url}")
-    return "", None, None
+    return "", None, None, ""
