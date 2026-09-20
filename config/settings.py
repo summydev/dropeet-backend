@@ -1,5 +1,3 @@
-
-import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
@@ -14,10 +12,20 @@ class Settings(BaseSettings):
     # Google OAuth Configuration
     GOOGLE_CLIENT_SECRETS_FILE: str = Field(default="client_secret.json")
     GOOGLE_REDIRECT_URI: str = Field(..., description="The exact OAuth callback URL registered in Google Console")
-    # --- NEW JWT SETTINGS ---
+    
+    # JWT Settings
     JWT_SECRET_KEY: str = Field(...)
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7 # 7 days
+
+    # --- PIPELINE & AI SETTINGS (New) ---
+    DEEPSEEK_API_KEY: str = Field(..., description="Required for the LLM extraction fallback")
+    
+    # Proxies (Optional, so we use default=None)
+    RESIDENTIAL_PROXY_HOST: str | None = Field(default=None)
+    RESIDENTIAL_PROXY_USER: str | None = Field(default=None)
+    RESIDENTIAL_PROXY_PASS: str | None = Field(default=None)
+
     # Tell Pydantic to read from a .env file automatically
     model_config = SettingsConfigDict(
         env_file=".env", 

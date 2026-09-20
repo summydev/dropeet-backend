@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, List
+from typing import Optional, List, Dict
 from datetime import datetime
 from database.models import OpportunityStatus
 
@@ -7,49 +7,76 @@ from database.models import OpportunityStatus
 # 1. API Input Schemas
 # ==========================================
 class LinkRequest(BaseModel):
-    """Payload received from the frontend when a user drops a link."""
     url: str = Field(..., description="The URL of the opportunity to scrape")
-    auto_sync: bool = Field(default=False, description="Whether to automatically push to Google Calendar after extraction")
+    # auto_sync removed: users should NEVER auto-sync untrusted AI data. Force manual review.
 
 class OpportunityUpdateRequest(BaseModel):
-    """Payload received when a user edits an opportunity and wants to sync it."""
     title: str
     organization: Optional[str] = None
     deadline: Optional[datetime] = None
+    timezone: Optional[str] = None
     summary: Optional[str] = None
     application_status: Optional[str] = None
     required_documents: Optional[List[str]] = None
 
 # ==========================================
-# 2. AI Extraction Schemas
+# 2. AI Extraction Schemas (UNTRUSTED)
 # ==========================================
-class OpportunityData(BaseModel):
-    """The strict inner schema for a single extracted opportunity configuration."""
-    title: str = Field(description="The title of the job, internship, scholarship, or opportunity")
-    organization: str = Field(description="The company, institution, or organization offering it")
-    deadline: Optional[str] = Field(description="The application deadline in YYYY-MM-DD format. Return None if not explicitly found.")
-    summary: str = Field(description="A brief 2-sentence summary of the opportunity, including eligibility or key requirements.")
-    required_documents: List[str] = Field(default_factory=list, description="Array of required documents (e.g., ['Resume', 'Cover Letter']). Return an empty array [] if none are mentioned.")
+class CandidateOpportunity(BaseModel):
+    """The strict schema the LLM must return. Treated as untrusted input."""
+    title: str = Field(description="The title of the opportunity")
+    organization: Optional[str] = Field(description="The company or institution")
+    extracted_deadline: Optional[str] = Field(description="The exact text of the deadline found (e.g., 'October 4, 10:00 AM')")
+    extracted_timezone: Optional[str] = Field(description="The timezone mentioned, if any")
+    location: Optional[str] = Field(description="Physical location or 'Virtual/Online'")
+    summary: str = Field(description="A brief 2-sentence summary of the opportunity")
+    required_documents: List[str] = Field(default_factory=list)
+    confidence_score: float = Field(description="A float between 0.0 and 1.0 representing extraction confidence")
+    evidence: Dict[str, str] = Field(
+        description="A mapping of fields to the exact text snippets from the page that prove them. E.g., {'deadline': 'Applications close Friday at 5pm'}"
+    )
 
-class OpportunityList(BaseModel):
-    """The mandatory uniform container format that DeepSeek will ALWAYS match against."""
-    opportunities: List[OpportunityData] = Field(description="List of extracted opportunity configurations discovered in the content payload.")
+class CandidateExtractionList(BaseModel):
+    """The uniform container format passed to the LLM."""
+    opportunities: List[CandidateOpportunity]
 
 # ==========================================
-# 3. API Output Schemas
+# 3. Deterministic Internal Schemas (TRUSTED)
+# ==========================================
+class ValidatedOpportunity(BaseModel):
+    """The deterministic schema created by your backend after parsing the CandidateOpportunity."""
+    title: str
+    organization: Optional[str]
+    source_url: str
+    deadline: Optional[datetime]
+    timezone: str
+    location: Optional[str]
+    summary: Optional[str]
+    required_documents: List[str]
+    idempotency_key: str
+    confidence: float
+    evidence: Dict[str, str]
+    is_ambiguous: bool = False # Flag if the backend validator couldn't confidently parse the LLM's 'extracted_deadline'
+
+# ==========================================
+# 4. API Output Schemas
 # ==========================================
 class OpportunityResponse(BaseModel):
-    """The formatted data returned to the frontend when fetching saved items."""
+    """The formatted data returned to the frontend."""
     id: int
     title: str
     organization: Optional[str]
     deadline: Optional[datetime]
+    timezone: Optional[str]
+    location: Optional[str]
     summary: Optional[str]
     source_url: str
     status: OpportunityStatus
     application_status: str
     required_documents: List[str]
     calendar_event_id: Optional[str]
+    confidence: Optional[float]
+    evidence: Optional[Dict[str, str]]
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

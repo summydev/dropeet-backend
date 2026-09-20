@@ -1,22 +1,22 @@
 import enum
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Enum, JSON
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Enum, JSON, Float
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database.session import Base
 
 class OpportunityStatus(enum.Enum):
-    PENDING = "pending"
-    ACTIONED = "actioned"
-    DISCARDED = "discarded"
+    PENDING = "pending"       # Waiting for user to review/approve
+    ACTIONED = "actioned"     # Approved and synced to calendar
+    DISCARDED = "discarded"   # Rejected by the user
 
 class User(Base):
     __tablename__ = "users"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    
+
     # Relationships
     opportunities = relationship("Opportunity", back_populates="owner", cascade="all, delete-orphan")
     google_credentials = relationship("GoogleCredential", back_populates="user", uselist=False, cascade="all, delete-orphan")
@@ -24,10 +24,10 @@ class User(Base):
 
 class GoogleCredential(Base):
     __tablename__ = "google_credentials"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
-    
+
     # OAuth 2.0 Tokens
     access_token = Column(String, nullable=False)
     refresh_token = Column(String, nullable=False)
@@ -35,7 +35,7 @@ class GoogleCredential(Base):
     client_id = Column(String, nullable=False)
     client_secret = Column(String, nullable=False)
     scopes = Column(String, nullable=False)
-    
+
     updated_at = Column(
         DateTime, 
         default=lambda: datetime.now(timezone.utc), 
@@ -48,23 +48,33 @@ class GoogleCredential(Base):
 
 class Opportunity(Base):
     __tablename__ = "opportunities"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    
+
+    # Core details
     title = Column(String, nullable=False)
     organization = Column(String, nullable=True)
-    deadline = Column(DateTime, nullable=True)
     summary = Column(Text, nullable=True)
     source_url = Column(String, nullable=False)
-    
+
+    # Temporal & Spatial details
+    deadline = Column(DateTime(timezone=True), nullable=True)
+    timezone = Column(String, nullable=True, default="Africa/Lagos")
+    location = Column(String, nullable=True)
+
+    # Zero-Trust / Defensive Fields
+    idempotency_key = Column(String, unique=True, index=True, nullable=False)
+    confidence = Column(Float, nullable=True) 
+    evidence = Column(JSON, nullable=True) # e.g., {"deadline": "Submit by Friday 3PM WAT"}
+
     # App Tracking Status (Is it pending user review, actioned/synced, or discarded?)
     status = Column(Enum(OpportunityStatus), default=OpportunityStatus.PENDING)
-    
+
     # Real-world Application Status & Requirements
     application_status = Column(String, default="Pending") # e.g., Pending, Applied, Interviewing, Rejected
     required_documents = Column(JSON, default=list)        # e.g., ["Resume", "Cover Letter"]
-    
+
     calendar_event_id = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -82,5 +92,5 @@ class Report(Base):
     message = Column(Text, nullable=True)
     # Store the entire exact payload of the card that failed
     card_details = Column(JSON, nullable=False)
-    
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())

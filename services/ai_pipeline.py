@@ -6,38 +6,34 @@ import logging
 from typing import Optional, List
 from openai import OpenAI
 from pydantic import ValidationError
-from schemas.opportunity import OpportunityList
-from services.local_extractor import extract_local   # <--- new import
+from schemas.opportunity import CandidateExtractionList, CandidateOpportunity
+from services.local_extractor import extract_local
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-LOCAL_CONFIDENCE_THRESHOLD = 0.75  # above this, skip DeepSeek
+LOCAL_CONFIDENCE_THRESHOLD = 0.75 
 
-def extract_opportunity_details_deepseek(cleaned_text: str, html: str = "", url: str = "") -> Optional[List[dict]]:
-    """
-    Hybrid extraction: tries local extraction first. If confidence is high, returns that.
-    Otherwise, falls back to DeepSeek.
-    """
+def extract_opportunity_details_deepseek(cleaned_text: str, html: str = "", url: str = "") -> Optional[List[CandidateOpportunity]]:
     if not cleaned_text:
         logger.warning("No text provided.")
         return None
 
-    # --- STEP 1: Local extraction (if HTML is available) ---
+    # --- STEP 1: Local extraction ---
     if html:
         try:
             local_results = extract_local(html, url)
-            if local_results and local_results[0].get("_confidence", 0) >= LOCAL_CONFIDENCE_THRESHOLD:
-                logger.info(f"✅ Local extraction succeeded with confidence {local_results[0]['_confidence']}. Skipping DeepSeek.")
-                # Clean up internal fields before returning
-                return [_clean_local_opp(o) for o in local_results]
+            if local_results and local_results[0].confidence_score >= LOCAL_CONFIDENCE_THRESHOLD:
+                logger.info(f"✅ Local extraction succeeded with confidence {local_results[0].confidence_score}. Skipping DeepSeek.")
+                return local_results
             else:
                 logger.info("Local confidence too low, falling back to DeepSeek.")
         except Exception as e:
             logger.warning(f"Local extraction failed: {e}")
 
-    # --- STEP 2: DeepSeek fallback (unchanged logic) ---
+    # --- STEP 2: DeepSeek fallback ---
     logger.info("🧠 Passing raw data to DeepSeek...")
-    deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+    deepseek_key = settings.DEEPSEEK_API_KEY
     if not deepseek_key:
         logger.error("❌ DEEPSEEK_API_KEY is missing.")
         return None
@@ -45,19 +41,20 @@ def extract_opportunity_details_deepseek(cleaned_text: str, html: str = "", url:
     client = OpenAI(base_url="https://api.deepseek.com/v1", api_key=deepseek_key)
 
     system_prompt = (
-        "You are an expert data extraction assistant for a career tracking tool. "
-        "Analyze the unstructured text and extract every opportunity mentioned into a JSON object "
-        "with an 'opportunities' key containing an array of opportunity objects. "
+        "You are a strict data extraction system. Extract opportunities from the text into a JSON object "
+        "with an 'opportunities' array. "
         "CRITICAL RULES TO PREVENT HALLUCINATIONS:\n"
         "1. DO NOT GUESS OR INVENT DATA. Treat the scraped text as absolute law.\n"
-        "2. If the application deadline is not explicitly stated, set 'deadline' to null.\n"
-        "3. If the organization name is not clear, set it to 'Unknown'.\n"
-        "REQUIRED DOCUMENTS: Scan the text for what the applicant needs to submit and return as a 'required_documents' array.\n"
-        "Output ONLY valid JSON with no markdown formatting elements or extra tokens."
+        "2. If the application deadline is not explicitly stated, set 'extracted_deadline' to null.\n"
+        "3. 'extracted_deadline' MUST be the exact text found in the document (e.g., 'Friday 5PM'). Do not reformat it.\n"
+        "4. You MUST provide an 'evidence' dictionary mapping the fields to the exact text snippets that prove them.\n"
+        "5. Provide a 'confidence_score' between 0.0 and 1.0.\n"
+        "Output ONLY valid JSON with no markdown formatting elements."
     )
-    user_content = f"Extract the core opportunity details from this data:\n\n{cleaned_text}"
-
+    
+    user_content = f"Extract details from this data:\n\n{cleaned_text}"
     preferred_models = ["deepseek-chat"]
+    
     for model_name in preferred_models:
         try:
             response = client.chat.completions.create(
@@ -73,13 +70,12 @@ def extract_opportunity_details_deepseek(cleaned_text: str, html: str = "", url:
             parsed = json.loads(raw_json)
 
             try:
-                validated = OpportunityList(**parsed)
-                return [opp.model_dump() for opp in validated.opportunities]
+                # Validates against the UNTRUSTED candidate schema
+                validated = CandidateExtractionList(**parsed)
+                return validated.opportunities
             except ValidationError as ve:
                 logger.error(f"Schema validation error: {ve}")
-                if isinstance(parsed, dict) and "opportunities" in parsed:
-                    return parsed["opportunities"]
-                return [parsed] if isinstance(parsed, dict) else None
+                return None
 
         except Exception as e:
             if any(str_code in str(e) for str_code in ["429", "503", "502"]):
@@ -90,9 +86,3 @@ def extract_opportunity_details_deepseek(cleaned_text: str, html: str = "", url:
 
     logger.error("All DeepSeek models failed.")
     return None
-
-def _clean_local_opp(opp: dict) -> dict:
-    """Remove internal keys before returning to the caller."""
-    opp.pop("_confidence", None)
-    opp.pop("_method", None)
-    return opp

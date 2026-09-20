@@ -23,8 +23,9 @@ async def add_opportunity(
     if not request.url.startswith("http"):
         raise HTTPException(status_code=400, detail="Invalid URL provided.")
 
-    # Handoff to background worker with the authenticated user's ID AND the auto_sync flag
-    background_tasks.add_task(process_link_task, request.url, current_user.id, request.auto_sync)
+    # 🚨 SECURITY GATE: Handoff to background worker WITHOUT auto_sync.
+    # The AI pipeline will only set status to PENDING, forcing user review.
+    background_tasks.add_task(process_link_task, request.url, current_user.id)
     
     return {"status": "success", "message": "Link ingested and queued for extraction."}
 
@@ -48,6 +49,7 @@ async def update_and_sync_opportunity(
     """
     Allows users to edit an opportunity. 
     If a deadline is set, it performs a clean sync to their Google Calendar.
+    This is the ONLY place where calendar syncing should occur (Principle #8).
     """
     
     # 1. Find the opportunity and ensure this user actually owns it
@@ -67,6 +69,11 @@ async def update_and_sync_opportunity(
     opp.organization = request.organization
     opp.deadline = request.deadline
     opp.summary = request.summary
+    opp.application_status = request.application_status or opp.application_status
+    
+    # Update timezone if passed in the request
+    if hasattr(request, 'timezone') and request.timezone:
+        opp.timezone = request.timezone
     
     # 4. Push to Google Calendar with safety checks
     if opp.deadline:
@@ -86,6 +93,7 @@ async def update_and_sync_opportunity(
     db.refresh(opp)
     
     return opp
+
 @router.put("/linkedin-cookies")
 async def save_linkedin_cookies(
     cookies: dict,   # e.g. {"li_at": "AQEDAT..."}
@@ -96,6 +104,7 @@ async def save_linkedin_cookies(
     current_user.linkedin_cookies = cookies
     db.commit()
     return {"status": "success"}
+
 @router.delete("/{opportunity_id}")
 async def delete_opportunity(
     opportunity_id: int,

@@ -9,12 +9,10 @@ from bs4 import BeautifulSoup
 import extruct
 from dateparser.search import search_dates
 from gliner import GLiNER
+from schemas.opportunity import CandidateOpportunity
 
 logger = logging.getLogger(__name__)
 
-# ------------------------------------------------------------
-# 1. Structured data extraction (schema.org)
-# ------------------------------------------------------------
 def _extract_structured_date(html: str, url: str) -> Optional[date]:
     try:
         data = extruct.extract(html, base_url=url, syntaxes=['json-ld'])
@@ -41,9 +39,6 @@ def _parse_iso_date(value) -> Optional[date]:
                 continue
     return None
 
-# ------------------------------------------------------------
-# 2. Keyword + dateparser heuristic
-# ------------------------------------------------------------
 def _keyword_deadline_extraction(text: str) -> List[Tuple[date, str, float]]:
     deadline_keywords = [
         "deadline", "due date", "apply by", "closing date", "submission",
@@ -62,9 +57,6 @@ def _keyword_deadline_extraction(text: str) -> List[Tuple[date, str, float]]:
                     results.append((chosen, sent.strip(), conf))
     return results
 
-# ------------------------------------------------------------
-# 3. GLiNER NER (local, zero‑cost)
-# ------------------------------------------------------------
 class GlinerWrapper:
     def __init__(self):
         self.model = None
@@ -86,18 +78,12 @@ class GlinerWrapper:
 
 gliner = GlinerWrapper()
 
-# ------------------------------------------------------------
-# 4. Decision fusion
-# ------------------------------------------------------------
 def _resolve_deadline(structured_date, keyword_results, gliner_entities) -> Dict:
-    candidates = []  # (date, source, confidence)
-
+    candidates = []  
     if structured_date:
         candidates.append((structured_date, "structured_data", 0.95))
-
     for d, _, conf in keyword_results:
         candidates.append((d, "keyword_dateparser", conf))
-
     for ent_text in gliner_entities.get("deadline", []):
         parsed = search_dates(ent_text, languages=['en'], settings={'PREFER_DATES_FROM': 'future'})
         if parsed:
@@ -112,9 +98,8 @@ def _resolve_deadline(structured_date, keyword_results, gliner_entities) -> Dict
                     candidates.append((dt.date(), "gliner_date", 0.65))
 
     if not candidates:
-        return {"deadline": None, "confidence": 0, "method": "none", "opportunity": None}
+        return {"deadline": None, "confidence": 0.0, "method": "none", "opportunity": None}
 
-    # Group votes by date
     votes = {}
     for d, src, conf in candidates:
         votes.setdefault(d, []).append((src, conf))
@@ -123,7 +108,6 @@ def _resolve_deadline(structured_date, keyword_results, gliner_entities) -> Dict
     methods = list(set(src for src, _ in votes[best_date]))
     avg_conf = sum(conf for _, conf in votes[best_date]) / len(votes[best_date])
 
-    # Opportunity title: prefer GLiNER’s “opportunity title”, longest string
     opp_title = None
     opps = gliner_entities.get("opportunity title", [])
     if opps:
@@ -136,46 +120,38 @@ def _resolve_deadline(structured_date, keyword_results, gliner_entities) -> Dict
         "opportunity": opp_title
     }
 
-# ------------------------------------------------------------
-# 5. Public entry point – runs local extraction
-# ------------------------------------------------------------
-def extract_local(html: str, url: str = "unknown") -> List[Dict]:
-    """
-    Takes raw HTML, returns a list of extracted opportunities (usually one).
-    Each dict contains at least: title, organization, deadline, summary, confidence.
-    If confidence is high, you can skip DeepSeek.
-    """
-    # Clean text for keyword + GLiNER
+def extract_local(html: str, url: str = "unknown") -> List[CandidateOpportunity]:
     soup = BeautifulSoup(html, "html.parser")
     text = soup.get_text(separator="\n", strip=True)
 
-    # Structured data (schema.org)
     struct_date = _extract_structured_date(html, url)
-
-    # Keyword heuristic
     kw_results = _keyword_deadline_extraction(text)
-
-    # GLiNER
     gliner_ents = gliner.extract(text)
-
-    # Resolve
     resolved = _resolve_deadline(struct_date, kw_results, gliner_ents)
 
-    # Fallback opportunity title to HTML title
-    if not resolved["opportunity"]:
+    opp_title = resolved["opportunity"]
+    if not opp_title:
         if soup.title:
-            resolved["opportunity"] = soup.title.get_text().strip()
+            opp_title = soup.title.get_text().strip()
         elif soup.h1:
-            resolved["opportunity"] = soup.h1.get_text().strip()
+            opp_title = soup.h1.get_text().strip()
+        else:
+            opp_title = "Unknown Opportunity"
 
-    # Build output matching your schema
-    opp = {
-        "title": resolved["opportunity"] or "Unknown Opportunity",
-        "organization": None,  # We don't extract org reliably yet; DeepSeek can fill later
-        "deadline": resolved["deadline"],
-        "summary": text[:500],  # short preview
-        "required_documents": [],   # local doesn't extract docs
-        "_confidence": resolved["confidence"],
-        "_method": resolved["method"]
-    }
+    # Construct the strictly typed untrusted Candidate
+    evidence_dict = {}
+    if resolved["deadline"]:
+        evidence_dict["deadline"] = f"Locally extracted via: {resolved['method']}"
+
+    opp = CandidateOpportunity(
+        title=opp_title,
+        organization=None, 
+        extracted_deadline=resolved["deadline"],
+        extracted_timezone=None,
+        location=None,
+        summary=text[:500], 
+        required_documents=[], 
+        confidence_score=resolved["confidence"],
+        evidence=evidence_dict
+    )
     return [opp]

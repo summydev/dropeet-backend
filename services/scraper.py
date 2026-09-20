@@ -2,6 +2,9 @@
 
 import os
 import logging
+import socket
+import ipaddress
+from urllib.parse import urlparse
 from typing import Tuple, Optional
 from curl_cffi import requests as cffi_requests
 from bs4 import BeautifulSoup
@@ -10,9 +13,22 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# --------------------------------------------------------------------
-# 1. Lightweight first attempt (TLS fingerprint spoofing)
-# --------------------------------------------------------------------
+def _validate_url_security(url: str):
+    """Prevents SSRF by blocking internal network access."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("Only HTTP/HTTPS allowed.")
+    
+    try:
+        ip_addr = socket.gethostbyname(parsed.hostname)
+        ip = ipaddress.ip_address(ip_addr)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast:
+            raise ValueError(f"Blocked SSRF attempt to internal IP: {ip}")
+    except socket.gaierror:
+        raise ValueError(f"Could not resolve hostname: {parsed.hostname}")
+    except ValueError:
+        raise ValueError("Invalid IP address resolved.")
+
 async def fetch_via_curl_cffi(url: str) -> Optional[str]:
     try:
         resp = cffi_requests.get(
@@ -30,17 +46,11 @@ async def fetch_via_curl_cffi(url: str) -> Optional[str]:
         pass
     return None
 
-# --------------------------------------------------------------------
-# 2. Playwright fallback (supports cookies & optional proxy)
-# --------------------------------------------------------------------
 async def playwright_fetch(
     url: str,
     cookies: Optional[dict] = None,
     proxy: Optional[dict] = None
 ) -> Tuple[Optional[str], Optional[bytes], Optional[str], Optional[str]]:
-    """
-    Returns (cleaned_text, image_bytes, image_mime, raw_html).
-    """
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(
@@ -55,7 +65,6 @@ async def playwright_fetch(
 
             context = await browser.new_context(**context_options)
 
-            # Inject cookies (e.g., LinkedIn session)
             if cookies:
                 domain = ".linkedin.com" if "linkedin.com" in url else None
                 if domain:
@@ -70,7 +79,6 @@ async def playwright_fetch(
             soup = BeautifulSoup(raw_html, "html.parser")
             cleaned_text = soup.get_text(separator="\n", strip=True)
 
-            # Optional image extraction
             img_bytes = None
             img_mime = None
             og_image = await page.query_selector("meta[property='og:image']")
@@ -89,26 +97,25 @@ async def playwright_fetch(
         logger.error(f"Playwright fallback failed: {e}")
         return None, None, None, None
 
-# --------------------------------------------------------------------
-# 3. Main scraper – returns (cleaned_text, image_bytes, image_mime, raw_html)
-# --------------------------------------------------------------------
 async def scrape_url_self_built(
     url: str,
     user_cookies: Optional[dict] = None,
     proxy: Optional[dict] = None
 ) -> Tuple[str, Optional[bytes], Optional[str], str]:
-    """
-    Self‑built scraper that returns cleaned text, optional image, and the raw HTML
-    for use in the local extraction pipeline.
-    """
-    # Step 1: try fast curl_cffi (works for many static sites)
+    
+    # SECURITY GATE: Enforce SSRF rules
+    try:
+        _validate_url_security(url)
+    except ValueError as e:
+        logger.error(f"Security validation failed for {url}: {e}")
+        return "", None, None, ""
+
     raw_html = await fetch_via_curl_cffi(url)
     if raw_html:
         soup = BeautifulSoup(raw_html, "html.parser")
         cleaned_text = soup.get_text(separator="\n", strip=True)
         return cleaned_text, None, None, raw_html
 
-    # Step 2: Playwright with cookies (LinkedIn/Instagram) or without
     cookies_to_use = None
     if "linkedin.com" in url:
         cookies_to_use = user_cookies
@@ -121,6 +128,5 @@ async def scrape_url_self_built(
     if text:
         return text, img_bytes, img_mime, raw_html
 
-    # Step 3: if everything fails
     logger.error(f"All self‑built methods exhausted for {url}")
     return "", None, None, ""
