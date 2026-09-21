@@ -62,19 +62,15 @@ class GlinerWrapper:
         self.model = None
 
     def load_model(self):
-        if self.model is None:
-            logger.info("Loading GLiNER model (once)...")
-            self.model = GLiNER.from_pretrained("urchade/gliner_medium-v2.1")
+        # Commenting this out to save RAM on Render!
+        # if self.model is None:
+        #     logger.info("Loading GLiNER model (once)...")
+        #     self.model = GLiNER.from_pretrained("urchade/gliner_medium-v2.1")
+        pass
 
     def extract(self, text: str) -> Dict[str, List[str]]:
-        self.load_model()
-        truncated = text[:4000]
-        entities = self.model.predict_entities(truncated, ["deadline", "date", "opportunity title"], threshold=0.5)
-        result = {"deadline": [], "date": [], "opportunity title": []}
-        for ent in entities:
-            if ent['label'] in result:
-                result[ent['label']].append(ent['text'])
-        return result
+        # Bypass GLiNER completely to prevent Render Out-Of-Memory crashes
+        return {"deadline": [], "date": [], "opportunity title": []}
 
 gliner = GlinerWrapper()
 
