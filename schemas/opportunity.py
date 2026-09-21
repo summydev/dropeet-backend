@@ -25,14 +25,15 @@ class OpportunityUpdateRequest(BaseModel):
 class CandidateOpportunity(BaseModel):
     """The strict schema the LLM must return. Treated as untrusted input."""
     title: str = Field(description="The title of the opportunity")
-    organization: Optional[str] = Field(description="The company or institution")
-    extracted_deadline: Optional[str] = Field(description="The exact text of the deadline found (e.g., 'October 4, 10:00 AM')")
-    extracted_timezone: Optional[str] = Field(description="The timezone mentioned, if any")
-    location: Optional[str] = Field(description="Physical location or 'Virtual/Online'")
-    summary: str = Field(description="A brief 2-sentence summary of the opportunity")
+    organization: Optional[str] = Field(default=None, description="The company or institution")
+    extracted_deadline: Optional[str] = Field(default=None, description="The exact text of the deadline found (e.g., 'October 4, 10:00 AM')")
+    extracted_timezone: Optional[str] = Field(default=None, description="The timezone mentioned, if any")
+    location: Optional[str] = Field(default=None, description="Physical location or 'Virtual/Online'")
+    summary: Optional[str] = Field(default="No summary provided.", description="A brief 2-sentence summary of the opportunity")
     required_documents: List[str] = Field(default_factory=list)
-    confidence_score: float = Field(description="A float between 0.0 and 1.0 representing extraction confidence")
+    confidence_score: float = Field(default=0.8, description="A float between 0.0 and 1.0 representing extraction confidence")
     evidence: Dict[str, str] = Field(
+        default_factory=dict,
         description="A mapping of fields to the exact text snippets from the page that prove them. E.g., {'deadline': 'Applications close Friday at 5pm'}"
     )
 
@@ -46,16 +47,16 @@ class CandidateExtractionList(BaseModel):
 class ValidatedOpportunity(BaseModel):
     """The deterministic schema created by your backend after parsing the CandidateOpportunity."""
     title: str
-    organization: Optional[str]
+    organization: Optional[str] = None
     source_url: str
-    deadline: Optional[datetime]
-    timezone: str
-    location: Optional[str]
-    summary: Optional[str]
-    required_documents: List[str]
+    deadline: Optional[datetime] = None
+    timezone: str = "Africa/Lagos"
+    location: Optional[str] = None
+    summary: Optional[str] = None
+    required_documents: List[str] = Field(default_factory=list)
     idempotency_key: str
-    confidence: float
-    evidence: Dict[str, str]
+    confidence: float = 0.0
+    evidence: Dict[str, str] = Field(default_factory=dict)
     is_ambiguous: bool = False # Flag if the backend validator couldn't confidently parse the LLM's 'extracted_deadline'
 
 # ==========================================
