@@ -8,10 +8,12 @@ from urllib.parse import urlparse
 from typing import Tuple, Optional
 from curl_cffi import requests as cffi_requests
 from bs4 import BeautifulSoup
-from playwright.async_api import async_playwright
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# Memory safeguard: Max 2MB per page to prevent OOM (Out of Memory) crashes
+MAX_PAGE_SIZE = 2 * 1024 * 1024  
 
 def _validate_url_security(url: str):
     """Prevents SSRF by blocking internal network access."""
@@ -29,131 +31,89 @@ def _validate_url_security(url: str):
     except ValueError:
         raise ValueError("Invalid IP address resolved.")
 
-async def fetch_via_curl_cffi(url: str) -> Optional[str]:
+async def fetch_lean(url: str, cookies: Optional[dict] = None) -> Optional[str]:
+    """
+    Uses curl_cffi to spoof a real browser's TLS signature without the massive RAM overhead of Playwright.
+    Now properly injects session cookies to bypass LinkedIn login walls.
+    """
     try:
-        resp = cffi_requests.get(
-            url,
-            impersonate="chrome124",
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                "Accept-Language": "en-US,en;q=0.9",
-            },
-            timeout=15,
-        )
-        if resp.status_code == 200 and len(resp.text) > 200:
-            return resp.text
-    except Exception:
-        pass
-    return None
-
-async def fetch_via_httpx(url: str) -> Optional[str]:
-    """Lightweight fallback scraper that uses very little RAM."""
-    try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-            }
-            response = await client.get(url, headers=headers)
-            if response.status_code == 200 and len(response.text) > 200:
-                return response.text
-    except Exception as e:
-        logger.warning(f"httpx fallback failed for {url}: {e}")
-    return None
-
-async def playwright_fetch(
-    url: str,
-    cookies: Optional[dict] = None,
-    proxy: Optional[dict] = None
-) -> Tuple[Optional[str], Optional[bytes], Optional[str], Optional[str]]:
-    # [KEPT FOR FUTURE USE IF YOU UPGRADE SERVER RAM]
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=["--disable-blink-features=AutomationControlled"]
+        # Context manager ensures connections close instantly when done
+        with cffi_requests.Session(impersonate="chrome124") as session:
+            resp = session.get(
+                url,
+                headers={
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9",
+                },
+                cookies=cookies, # Inject LinkedIn cookies here
+                timeout=10,      # Strict timeout prevents hanging worker threads
+                stream=True      # Stream prevents loading massive files into RAM all at once
             )
-            context_options = {
-                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            }
-            if proxy:
-                context_options["proxy"] = proxy
+            
+            if resp.status_code != 200:
+                logger.warning(f"URL {url} returned status {resp.status_code}")
+                # LinkedIn often returns 999 for bot detection.
+                return None
 
-            context = await browser.new_context(**context_options)
+            content = b""
+            for chunk in resp.iter_content(chunk_size=8192):
+                content += chunk
+                if len(content) > MAX_PAGE_SIZE:
+                    logger.warning(f"Page exceeded 2MB limit. Truncating {url}")
+                    break # Protects server RAM by stopping the download
 
-            if cookies:
-                domain = ".linkedin.com" if "linkedin.com" in url else None
-                if domain:
-                    cookie_list = [{"name": k, "value": v, "domain": domain, "path": "/"} for k, v in cookies.items()]
-                    await context.add_cookies(cookie_list)
-
-            page = await context.new_page()
-            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            await page.wait_for_timeout(4000)
-
-            raw_html = await page.content()
-            soup = BeautifulSoup(raw_html, "html.parser")
-            cleaned_text = soup.get_text(separator="\n", strip=True)
-
-            img_bytes = None
-            img_mime = None
-            og_image = await page.query_selector("meta[property='og:image']")
-            if og_image:
-                img_url = await og_image.get_attribute("content")
-                if img_url and img_url.startswith("http"):
-                    async with httpx.AsyncClient() as client:
-                        resp = await client.get(img_url, timeout=10)
-                        if resp.status_code == 200:
-                            img_bytes = resp.content
-                            img_mime = "image/jpeg" if "jpg" in img_url else "image/png"
-
-            await browser.close()
-            return cleaned_text, img_bytes, img_mime, raw_html
+            return content.decode(resp.encoding or 'utf-8', errors='ignore')
+            
     except Exception as e:
-        logger.error(f"Playwright fallback failed: {e}")
-        return None, None, None, None
+        logger.error(f"Lean fetch failed for {url}: {e}")
+        return None
 
 async def scrape_url_self_built(
     url: str,
     user_cookies: Optional[dict] = None,
-    proxy: Optional[dict] = None
+    proxy: Optional[dict] = None # Left in for future proxy support
 ) -> Tuple[str, Optional[bytes], Optional[str], str]:
     
-    # SECURITY GATE: Enforce SSRF rules
+    # 1. SECURITY GATE: Run validation before ANY outbound request
     try:
         _validate_url_security(url)
     except ValueError as e:
         logger.error(f"Security validation failed for {url}: {e}")
         return "", None, None, ""
 
-    # Step 1: Fast curl_cffi (Lightweight - Safe for Render)
-    raw_html = await fetch_via_curl_cffi(url)
-    if raw_html:
-        soup = BeautifulSoup(raw_html, "html.parser")
-        cleaned_text = soup.get_text(separator="\n", strip=True)
-        return cleaned_text, None, None, raw_html
+    # 2. Fetch the raw HTML using our lean, low-RAM client
+    # We pass the LinkedIn cookies straight into the fetcher
+    cookies_to_use = user_cookies if "linkedin.com" in url else None
+    if "linkedin.com" in url and not cookies_to_use:
+        logger.warning("No LinkedIn cookies provided – scraping may fail or hit a login wall.")
 
-    # Step 2: httpx fallback (Lightweight - Safe for Render)
-    logger.info(f"curl_cffi missed, trying httpx fallback for {url}")
-    raw_html = await fetch_via_httpx(url)
-    if raw_html:
-        soup = BeautifulSoup(raw_html, "html.parser")
-        cleaned_text = soup.get_text(separator="\n", strip=True)
-        return cleaned_text, None, None, raw_html
+    raw_html = await fetch_lean(url, cookies=cookies_to_use)
+    
+    if not raw_html:
+        logger.error(f"Failed to fetch HTML for {url}")
+        return "", None, None, ""
 
-    # --- PLAYWRIGHT BYPASSED FOR RENDER FREE TIER ---
-    # cookies_to_use = None
-    # if "linkedin.com" in url:
-    #     cookies_to_use = user_cookies
-    #     if not cookies_to_use:
-    #         logger.warning("No LinkedIn cookies provided – scraping may fail.")
-    #
-    # text, img_bytes, img_mime, raw_html = await playwright_fetch(
-    #     url, cookies=cookies_to_use, proxy=proxy
-    # )
-    # if text:
-    #     return text, img_bytes, img_mime, raw_html
+    soup = BeautifulSoup(raw_html, "html.parser")
+    
+    # 3. Optional: Grab OpenGraph image for the UI card
+    img_bytes, img_mime = None, None
+    og_image = soup.find("meta", property="og:image")
+    if og_image and og_image.get("content"):
+        img_url = og_image["content"]
+        if img_url.startswith("http"):
+            try:
+                async with httpx.AsyncClient() as client:
+                    img_resp = await client.get(img_url, timeout=5)
+                    if img_resp.status_code == 200:
+                        img_bytes = img_resp.content
+                        img_mime = "image/jpeg" if "jpg" in img_url.lower() else "image/png"
+            except Exception as e:
+                logger.warning(f"Could not fetch OG image: {e}")
 
-    logger.error(f"All lightweight methods exhausted for {url}. Playwright disabled.")
-    return "", None, None, ""
+    # 4. Strip out heavy, useless tags to save tokens when passed to the LLM
+    for script_tag in soup(["style", "nav", "footer", "aside"]):
+        script_tag.decompose()
+
+    cleaned_text = soup.get_text(separator="\n", strip=True)
+    
+    return cleaned_text, img_bytes, img_mime, raw_html
