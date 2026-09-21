@@ -46,11 +46,28 @@ async def fetch_via_curl_cffi(url: str) -> Optional[str]:
         pass
     return None
 
+async def fetch_via_httpx(url: str) -> Optional[str]:
+    """Lightweight fallback scraper that uses very little RAM."""
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+            }
+            response = await client.get(url, headers=headers)
+            if response.status_code == 200 and len(response.text) > 200:
+                return response.text
+    except Exception as e:
+        logger.warning(f"httpx fallback failed for {url}: {e}")
+    return None
+
 async def playwright_fetch(
     url: str,
     cookies: Optional[dict] = None,
     proxy: Optional[dict] = None
 ) -> Tuple[Optional[str], Optional[bytes], Optional[str], Optional[str]]:
+    # [KEPT FOR FUTURE USE IF YOU UPGRADE SERVER RAM]
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(
@@ -110,23 +127,33 @@ async def scrape_url_self_built(
         logger.error(f"Security validation failed for {url}: {e}")
         return "", None, None, ""
 
+    # Step 1: Fast curl_cffi (Lightweight - Safe for Render)
     raw_html = await fetch_via_curl_cffi(url)
     if raw_html:
         soup = BeautifulSoup(raw_html, "html.parser")
         cleaned_text = soup.get_text(separator="\n", strip=True)
         return cleaned_text, None, None, raw_html
 
-    cookies_to_use = None
-    if "linkedin.com" in url:
-        cookies_to_use = user_cookies
-        if not cookies_to_use:
-            logger.warning("No LinkedIn cookies provided – scraping may fail.")
+    # Step 2: httpx fallback (Lightweight - Safe for Render)
+    logger.info(f"curl_cffi missed, trying httpx fallback for {url}")
+    raw_html = await fetch_via_httpx(url)
+    if raw_html:
+        soup = BeautifulSoup(raw_html, "html.parser")
+        cleaned_text = soup.get_text(separator="\n", strip=True)
+        return cleaned_text, None, None, raw_html
 
-    text, img_bytes, img_mime, raw_html = await playwright_fetch(
-        url, cookies=cookies_to_use, proxy=proxy
-    )
-    if text:
-        return text, img_bytes, img_mime, raw_html
+    # --- PLAYWRIGHT BYPASSED FOR RENDER FREE TIER ---
+    # cookies_to_use = None
+    # if "linkedin.com" in url:
+    #     cookies_to_use = user_cookies
+    #     if not cookies_to_use:
+    #         logger.warning("No LinkedIn cookies provided – scraping may fail.")
+    #
+    # text, img_bytes, img_mime, raw_html = await playwright_fetch(
+    #     url, cookies=cookies_to_use, proxy=proxy
+    # )
+    # if text:
+    #     return text, img_bytes, img_mime, raw_html
 
-    logger.error(f"All self‑built methods exhausted for {url}")
+    logger.error(f"All lightweight methods exhausted for {url}. Playwright disabled.")
     return "", None, None, ""
